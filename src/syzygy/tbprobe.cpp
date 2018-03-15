@@ -199,7 +199,7 @@ public:
 
     // Memory map the file and check it. File should be already open and will be
     // closed after mapping.
-    uint8_t* map(void** baseAddress, uint64_t* mapping, const uint8_t* TB_MAGIC) {
+    uint8_t* map(void** baseAddress, uint64_t* mapping, bool isWdl) {
 
         assert(is_open());
 
@@ -249,16 +249,16 @@ public:
 #endif
         uint8_t* data = (uint8_t*)*baseAddress;
 
-        if (   *data++ != *TB_MAGIC++
-            || *data++ != *TB_MAGIC++
-            || *data++ != *TB_MAGIC++
-            || *data++ != *TB_MAGIC) {
+        const uint8_t Magics[][4] = { { 0xD7, 0x66, 0x0C, 0xA5 },
+                                      { 0x71, 0xE8, 0x23, 0x5D } };
+
+        if (memcmp(data, Magics[isWdl], 4)) {
             std::cerr << "Corrupted table in file " << fname << std::endl;
             unmap(*baseAddress, *mapping);
             return *baseAddress = nullptr, nullptr;
         }
 
-        return data;
+        return data + 4; // Skip Magics's header
     }
 
     static void unmap(void* baseAddress, uint64_t mapping) {
@@ -1096,14 +1096,11 @@ void* init(TBTable<Type>& e, const Position& pos) {
         b += std::string(popcount(pos.pieces(BLACK, pt)), PieceToChar[pt]);
     }
 
-    const uint8_t TB_MAGIC[][4] = { { 0xD7, 0x66, 0x0C, 0xA5 },
-                                    { 0x71, 0xE8, 0x23, 0x5D } };
-
     fname =  (e.key == pos.material_key() ? w + 'v' + b : b + 'v' + w)
            + (Type == WDL ? ".rtbw" : ".rtbz");
 
-    uint8_t* data = TBFile(fname).map(&e.baseAddress, &e.mapping,
-                                      TB_MAGIC[Type == WDL]);
+    uint8_t* data = TBFile(fname).map(&e.baseAddress, &e.mapping, Type == WDL);
+
     if (data)
         do_init(e, data);
 
