@@ -159,13 +159,13 @@ static_assert(sizeof(LR) == 3, "LR tree entry must be 3 bytes");
 
 // Tablebases data layout is structured as following:
 //
-//  TBFile:   maps/unmaps the physical .rtbw and .rtbz files
+//  TBFile:   memory maps/unmaps the physical .rtbw and .rtbz files
 //  TBTable:  one object for each file with corresponding indexing information
 //  TBTables: has ownership of TBTable objects, keeping a list and a hash
 
-// class TBFile memory maps/unmaps the single .rtbw and .rtbz files, where TB are
-// stored. Files are memory mapped for best performance. Files are mapped at
-// first access, not at init time.
+// class TBFile memory maps/unmaps the single .rtbw and .rtbz files. Files are
+// memory mapped for best performance. Files are mapped at first access: at init
+// time only existence of the file is checked.
 class TBFile : public std::ifstream {
 
     std::string fname;
@@ -274,9 +274,9 @@ public:
 
 std::string TBFile::Paths;
 
-// struct PairsData keeps low level indexing information to access the TB data.
-// There are 8 or 2 PairsData records for each TBTable, according if the type of
-// corresponding TB file has pawns or not. It is populated at first access.
+// struct PairsData contains low level indexing information to access TB data.
+// There are 8 or 2 PairsData records for each TBTable, according if the TB file
+// has pawns or not. It is populated at first access.
 struct PairsData {
     int flags;
     size_t sizeofBlock;            // Block size in bytes
@@ -299,7 +299,7 @@ struct PairsData {
     uint16_t map_idx[4];           // WDLWin, WDLLoss, WDLCursedWin, WDLBlessedLoss (used in DTZ)
 };
 
-// struct TBTable keeps indexing information to access the corresponding TBFile.
+// struct TBTable contains indexing information to access the corresponding TBFile.
 // There are 2 types of TBTable, corresponding to a WDL or a DTZ file. TBTable
 // is populated at init time but the nested PairsData records are populated at
 // first access, when the corresponding file is memory mapped.
@@ -347,16 +347,14 @@ TBTable<WDL>::TBTable(const std::string& code) : TBTable() {
             if (popcount(pos.pieces(c, pt)) == 1)
                 hasUniquePieces = true;
 
-    if (hasPawns) {
-        // Set the leading color. In case both sides have pawns the leading color
-        // is the side with less pawns because this leads to better compression.
-        bool c =   !pos.count<PAWN>(BLACK)
-                || (   pos.count<PAWN>(WHITE)
-                    && pos.count<PAWN>(BLACK) >= pos.count<PAWN>(WHITE));
+    // Set the leading color. In case both sides have pawns the leading color
+    // is the side with less pawns because this leads to better compression.
+    bool c =   !pos.count<PAWN>(BLACK)
+            || (   pos.count<PAWN>(WHITE)
+                && pos.count<PAWN>(BLACK) >= pos.count<PAWN>(WHITE));
 
-        pawnCount[0] = pos.count<PAWN>(c ? WHITE : BLACK);
-        pawnCount[1] = pos.count<PAWN>(c ? BLACK : WHITE);
-    }
+    pawnCount[0] = pos.count<PAWN>(c ? WHITE : BLACK);
+    pawnCount[1] = pos.count<PAWN>(c ? BLACK : WHITE);
 
     key2 = pos.set(code, BLACK, &st).material_key();
 }
@@ -364,16 +362,14 @@ TBTable<WDL>::TBTable(const std::string& code) : TBTable() {
 template<>
 TBTable<DTZ>::TBTable(const TBTable<WDL>& wdl) : TBTable() {
 
+    // Use the corresponding WDL table to avoid recalculating all from scratch
     key = wdl.key;
     key2 = wdl.key2;
     pieceCount = wdl.pieceCount;
     hasPawns = wdl.hasPawns;
     hasUniquePieces = wdl.hasUniquePieces;
-
-    if (hasPawns) {
-        pawnCount[0] = wdl.pawnCount[0];
-        pawnCount[1] = wdl.pawnCount[1];
-    }
+    pawnCount[0] = wdl.pawnCount[0];
+    pawnCount[1] = wdl.pawnCount[1];
 }
 
 
