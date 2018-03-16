@@ -199,7 +199,7 @@ public:
 
     // Memory map the file and check it. File should be already open and will be
     // closed after mapping.
-    uint8_t* map(void** baseAddress, uint64_t* mapping, bool isWdl) {
+    uint8_t* map(void** baseAddress, uint64_t* mapping, TBType type) {
 
         assert(is_open());
 
@@ -252,7 +252,7 @@ public:
         const uint8_t Magics[][4] = { { 0xD7, 0x66, 0x0C, 0xA5 },
                                       { 0x71, 0xE8, 0x23, 0x5D } };
 
-        if (memcmp(data, Magics[isWdl], 4)) {
+        if (memcmp(data, Magics[type == WDL], 4)) {
             std::cerr << "Corrupted table in file " << fname << std::endl;
             unmap(*baseAddress, *mapping);
             return *baseAddress = nullptr, nullptr;
@@ -372,6 +372,11 @@ TBTable<DTZ>::TBTable(const TBTable<WDL>& wdl) : TBTable() {
     pawnCount[1] = wdl.pawnCount[1];
 }
 
+template<TBType Type>
+TBTable<Type>::~TBTable() {
+    if (baseAddress)
+        TBFile::unmap(baseAddress, mapping);
+}
 
 // class TBTables creates and has ownership of the TBTable objects, one for each
 // TB file found. It supports a fast, hash based, table lookup. Populated at
@@ -419,14 +424,8 @@ public:
 
 TBTables TBTables;
 
-template<TBType Type>
-TBTable<Type>::~TBTable() {
-    if (baseAddress)
-        TBFile::unmap(baseAddress, mapping);
-}
-
-// If the corresponding file is found (but still not memory mapped) a new TBTable
-// object is created and added to the list and into the hash table.
+// If the corresponding file exists two new objects TBTable<WDL> and TBTable<DTZ>
+// are created and added to the lists and hash table. Called at init time.
 void TBTables::add(const std::vector<PieceType>& pieces) {
 
     std::string code;
@@ -446,6 +445,7 @@ void TBTables::add(const std::vector<PieceType>& pieces) {
     wdlTable.emplace_back(code);
     dtzTable.emplace_back(wdlTable.back());
 
+    // Insert into the hash keys for both colors: KRvK with KR white and black
     insert(wdlTable.back().key , &wdlTable.back(), &dtzTable.back());
     insert(wdlTable.back().key2, &wdlTable.back(), &dtzTable.back());
 }
@@ -1003,8 +1003,10 @@ uint8_t* set_dtz_map(TBTable<DTZ>& e, uint8_t* data, File maxFile) {
     return data += (uintptr_t)data & 1; // Word alignment
 }
 
+// Populate entry's PairsData records with data from the just memory mapped file.
+// Called at first access.
 template<TBType Type>
-void do_init(TBTable<Type>& e, uint8_t* data) {
+void set(TBTable<Type>& e, uint8_t* data) {
 
     PairsData* d;
 
@@ -1068,13 +1070,17 @@ void do_init(TBTable<Type>& e, uint8_t* data) {
         }
 }
 
+// If the TB file corresponding to the given position is already memory mapped
+// then return its base address, otherwise try to memory map and init it. Called
+// at every probe, memory map and init only at first access. Function is thread
+// safe and can be called concurrently.
 template<TBType Type>
-void* init(TBTable<Type>& e, const Position& pos) {
+void* mapped(TBTable<Type>& e, const Position& pos) {
 
     static Mutex mutex;
 
-    // Avoid a thread reads 'ready' == true while another is still in do_init(),
-    // this could happen due to compiler reordering.
+    // Use 'aquire' to avoid a thread reads 'ready' == true while another is
+    // still working, this could happen due to compiler reordering.
     if (e.ready.load(std::memory_order_acquire))
         return e.baseAddress;
 
@@ -1093,10 +1099,10 @@ void* init(TBTable<Type>& e, const Position& pos) {
     fname =  (e.key == pos.material_key() ? w + 'v' + b : b + 'v' + w)
            + (Type == WDL ? ".rtbw" : ".rtbz");
 
-    uint8_t* data = TBFile(fname).map(&e.baseAddress, &e.mapping, Type == WDL);
+    uint8_t* data = TBFile(fname).map(&e.baseAddress, &e.mapping, Type);
 
     if (data)
-        do_init(e, data);
+        set(e, data);
 
     e.ready.store(true, std::memory_order_release);
     return e.baseAddress;
@@ -1110,7 +1116,7 @@ T probe_table(const Position& pos, ProbeState* result, WDLScore wdl = WDLDraw) {
 
     TBTable<Type>* entry = TBTables.get<Type>(pos.material_key());
 
-    if (!entry || !init(*entry, pos))
+    if (!entry || !mapped(*entry, pos))
         return *result = FAIL, T();
 
     return do_probe_table(pos, entry, wdl, result);
