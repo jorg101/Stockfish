@@ -385,32 +385,33 @@ class TBTables {
 
     typedef std::tuple<Key, TBTable<WDL>*, TBTable<DTZ>*> Entry;
 
-    static const int TBHASHBITS = 10;
-    static const int HSHMAX     = 5;
+    static const int Size = 1 << 12; // 4K table, indexed by key's 12 lsb
 
-    Entry hashTable[1 << TBHASHBITS][HSHMAX];
+    Entry hashTable[Size];
 
     std::deque<TBTable<WDL>> wdlTable;
     std::deque<TBTable<DTZ>> dtzTable;
 
     void insert(Key key, TBTable<WDL>* wdl, TBTable<DTZ>* dtz) {
-        for (Entry& entry : hashTable[key >> (64 - TBHASHBITS)])
-            if (!std::get<1>(entry) || std::get<0>(entry) == key) {
-                entry = std::make_tuple(key, wdl, dtz);
+        // Ensure last element is empty to avoid overflow when looking up
+        for (Entry* entry = &hashTable[(uint32_t)key & (Size - 1)]; entry - hashTable < Size - 1; ++entry)
+            if (!std::get<1>(*entry) || std::get<0>(*entry) == key) {
+                *entry = std::make_tuple(key, wdl, dtz);
                 return;
             }
-
-        std::cerr << "HSHMAX too low!" << std::endl;
+        std::cerr << "TB hash table size too low!" << std::endl;
         exit(1);
     }
 
 public:
     template<TBType Type>
     TBTable<Type>* get(Key key) {
-        for (Entry& entry : hashTable[key >> (64 - TBHASHBITS)])
-            if (std::get<0>(entry) == key)
-                return std::get<Type == WDL ? 1 : 2>(entry);
-        return nullptr;
+        for (Entry* entry = &hashTable[(uint32_t)key & (Size - 1)]; ; ++entry) {
+            if (std::get<0>(*entry) == key)
+                return std::get<Type == WDL ? 1 : 2>(*entry);
+            if (!std::get<1>(*entry))
+                return nullptr;
+        }
     }
 
     void clear() {
@@ -1119,7 +1120,7 @@ T probe_table(const Position& pos, ProbeState* result, WDLScore wdl = WDLDraw) {
     if (!entry || !mapped(*entry, pos))
         return *result = FAIL, T();
 
-    return do_probe_table(pos, entry, wdl, result);
+    return do_probe_table<Type>(pos, entry, wdl, result);
 }
 
 // For a position where the side to move has a winning capture it is not necessary
