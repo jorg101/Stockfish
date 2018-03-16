@@ -378,8 +378,7 @@ TBTable<DTZ>::TBTable(const TBTable<WDL>& wdl) : TBTable() {
 // init time.
 class TBTables {
 
-    typedef std::pair<TBTable<WDL>*, TBTable<DTZ>*> EntryPair;
-    typedef std::pair<Key, EntryPair> Entry;
+    typedef std::tuple<Key, TBTable<WDL>*, TBTable<DTZ>*> Entry;
 
     static const int TBHASHBITS = 10;
     static const int HSHMAX     = 5;
@@ -391,8 +390,8 @@ class TBTables {
 
     void insert(Key key, TBTable<WDL>* wdl, TBTable<DTZ>* dtz) {
         for (Entry& entry : hashTable[key >> (64 - TBHASHBITS)])
-            if (!entry.second.first || entry.first == key) {
-                entry = std::make_pair(key, std::make_pair(wdl, dtz));
+            if (!std::get<1>(entry) || std::get<0>(entry) == key) {
+                entry = std::make_tuple(key, wdl, dtz);
                 return;
             }
 
@@ -404,9 +403,8 @@ public:
     template<TBType Type>
     TBTable<Type>* get(Key key) {
         for (Entry& entry : hashTable[key >> (64 - TBHASHBITS)])
-            if (entry.first == key)
-                return std::get<Type>(entry.second);
-
+            if (std::get<0>(entry) == key)
+                return std::get<Type == WDL ? 1 : 2>(entry);
         return nullptr;
     }
 
